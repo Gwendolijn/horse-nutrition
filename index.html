@@ -29,25 +29,26 @@
       <ul class="feeds" id="feeds"></ul>
       <p class="hint">The feed list is shared by all your horses; the ticks are per horse.</p>
     </section>
-
-    <section class="card">
-      <h2>Your data</h2>
-      <p class="hint first">Saved automatically in this browser, on this device only. Use these to move it to another device or share it.</p>
-      <div class="data-actions">
-        <button type="button" class="btn" id="share">Share link</button>
-        <button type="button" class="btn ghost" id="import-file">Import file</button>
-        <button type="button" class="btn ghost" id="export-backup">Save backup file</button>
-        <button type="button" class="btn ghost" id="export-feeds">Save feeds as spreadsheet</button>
-      </div>
-      <input type="file" id="file-input" accept=".json,.csv,.txt,application/json,text/csv" hidden>
-      <p class="hint" id="data-status" role="status"></p>
-      <div id="reset-slot"></div>
-    </section>
   </div>
 
   <section class="card result" aria-live="polite">
     <h2 id="result-title">Daily ration</h2>
     <div id="result"><p class="hint">Loading solver…</p></div>
+  </section>
+
+  <!-- After the result in the source, so it comes last on a phone; the grid puts it under the inputs on wide screens. -->
+  <section class="card data">
+    <h2>Your data</h2>
+    <p class="hint first">Saved automatically in this browser, on this device only. Use these to move it to another device or share it.</p>
+    <div class="data-actions">
+      <button type="button" class="btn" id="share">Share link</button>
+      <button type="button" class="btn ghost" id="import-file">Import file</button>
+      <button type="button" class="btn ghost" id="export-backup">Save backup file</button>
+      <button type="button" class="btn ghost" id="export-feeds">Save feeds as spreadsheet</button>
+    </div>
+    <input type="file" id="file-input" accept=".json,.csv,.txt,application/json,text/csv" hidden>
+    <p class="hint" id="data-status" role="status"></p>
+    <div id="reset-slot"></div>
   </section>
 </main>
 

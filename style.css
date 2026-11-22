@@ -47,7 +47,9 @@ p { margin: 0; }
 .inputs { display: grid; gap: 16px; align-content: start; }
 @media (min-width: 860px) {
   .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
-  .result { position: sticky; top: 16px; }
+  .inputs { grid-column: 1; grid-row: 1; }
+  .data { grid-column: 1; grid-row: 2; }
+  .result { grid-column: 2; grid-row: 1 / span 2; position: sticky; top: 16px; }
 }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
