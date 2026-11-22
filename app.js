@@ -15,6 +15,17 @@ const ratioRange = (r) => (r.lo != null ? `${r.lo}–${r.hi}` : `max ${r.hi}`);
 
 // state: { feeds (the library, shared by all horses), horses, current (a horse id) }
 let state = load(localStorage);
+// How the result is shown: "charts" or "numbers". A per-device preference,
+// kept apart from the horse and feed data so it is never exported or shared.
+const VIEW_KEY = "horsediet.view";
+let view = "charts";
+try { if (localStorage.getItem(VIEW_KEY) === "numbers") view = "numbers"; } catch {}
+function setView(next) {
+  view = next;
+  try { localStorage.setItem(VIEW_KEY, view); } catch {}
+  update();
+}
+
 let glpk = null;
 let solveSeq = 0;
 
@@ -422,22 +433,139 @@ function renderInfeasible(res) {
         "Several requirements conflict at once. Try adding more feeds, or check the requirement values.");
 }
 
+const amountText = (kg) => (kg < 1 ? `${fmt(kg * 1000, 0)} g` : `${fmt(kg, 2)} kg`);
+const STARCH = { key: "starch", label: "Starch", unit: "g", digits: 0 };
+
+// One line of the ration: feed and amount. Pointing at it (mouse) or tapping
+// it (touch, keyboard) shows what that amount supplies, and how much of the
+// ration's total of each nutrient that is.
+function feedLine(f, kg, summary) {
+  const rows = [...NUTRIENTS, STARCH]
+    .map((n) => {
+      const amount = f[n.key] * f.dm * kg;
+      return { n, amount, share: summary.delivered[n.key] > 0 ? amount / summary.delivered[n.key] : 0 };
+    })
+    .filter((r) => r.amount > 0)
+    .sort((a, b) => b.share - a.share);
+
+  const pop = h("div", { className: "feed-pop" },
+    h("p", { className: "pop-title" }, `What ${amountText(kg)} of ${f.name} supplies`),
+    rows.length
+      ? h("table", {},
+          h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "Amount"), h("th", { colSpan: 2 }, "Share of the ration"))),
+          h("tbody", {}, rows.map((r) =>
+            h("tr", {},
+              h("td", {}, r.n.label),
+              h("td", {}, `${fmt(r.amount, r.n.digits)} ${r.n.unit}`),
+              h("td", {}, `${fmt(r.share * 100, 0)}%`),
+              h("td", { className: "mini" }, h("span", {}, h("i", { style: `width:${r.share * 100}%` })))))))
+      : h("p", { className: "hint" }, "Nothing that the planner tracks."));
+
+  const button = h("button", { type: "button", className: "feed-toggle", "aria-expanded": "false" }, f.name);
+  const li = h("li", {}, button, h("span", { className: "amount" }, amountText(kg)), pop);
+  button.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !li.classList.contains("open");
+    closeFeedPops();
+    li.classList.toggle("open", open);
+    button.setAttribute("aria-expanded", String(open));
+  });
+  pop.addEventListener("click", (e) => e.stopPropagation());
+  return li;
+}
+
+function closeFeedPops() {
+  for (const li of document.querySelectorAll(".ration li.open")) {
+    li.classList.remove("open");
+    li.querySelector(".feed-toggle").setAttribute("aria-expanded", "false");
+  }
+}
+document.addEventListener("click", closeFeedPops);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFeedPops(); });
+
+const BAR_CAP = 3; // nutrient bars run to 300% of the need
+const TIGHT = 1e-4; // how close counts as "exactly at" a requirement or limit
+
+// One bar per nutrient: supply as a share of the need. A solved ration never
+// falls short, so the useful signal is which nutrients sit exactly at the
+// minimum (they are what shapes the ration) and which are far above it.
+function nutrientBars(summary, hz) {
+  return h("div", { className: "bars" }, NUTRIENTS.map((n) => {
+    const need = hz.req[n.key];
+    const got = summary.delivered[n.key];
+    const amount = `${fmt(got, n.digits)} ${n.unit}`;
+    if (!(need > 0)) {
+      return h("div", { className: "bar-row" },
+        h("span", { className: "bar-label" }, n.label),
+        h("span", { className: "bar-value" }, amount),
+        h("span", { className: "bar-detail" }, "No requirement set"));
+    }
+    const share = got / need;
+    return h("div", { className: "bar-row" },
+      h("span", { className: "bar-label" }, n.label,
+        share < 1 + TIGHT ? h("span", { className: "tag" }, "at minimum") : null),
+      h("span", { className: "bar-value" }, `${fmt(share * 100, 0)}%`),
+      h("span", { className: `meter${share > BAR_CAP ? " over" : ""}` },
+        h("i", { style: `width:${(Math.min(share, BAR_CAP) / BAR_CAP) * 100}%` })),
+      h("span", { className: "bar-detail" }, `${amount} of ${fmt(need, n.digits)} ${n.unit} needed`));
+  }));
+}
+
+// A value on a scale from 0 to axisMax, with the allowed range (lo to hi,
+// either may be open) shaded. kept: false draws a ratio that is only shown
+// for information, which is the one case that can fall outside its range.
+function rangeRow({ label, value, text, detail, lo = null, hi = null, axisMax, kept = true }) {
+  const at = (v) => Math.max(0, Math.min(v / axisMax, 1)) * 100;
+  const from = at(lo ?? 0);
+  const to = at(hi ?? axisMax);
+  const inside = value != null && (lo == null || value >= lo * (1 - TIGHT)) && (hi == null || value <= hi * (1 + TIGHT));
+  const atEdge = inside && ((lo != null && value <= lo * (1 + TIGHT)) || (hi != null && value >= hi * (1 - TIGHT)));
+  const note = !inside ? "✗ outside range" : atEdge ? "at limit" : null;
+  return h("div", { className: "bar-row" },
+    h("span", { className: "bar-label" }, label, note ? h("span", { className: `tag${inside ? "" : " warn"}` }, note) : null),
+    h("span", { className: "bar-value" }, text),
+    h("span", { className: `range${kept ? "" : " loose"}` },
+      h("span", { className: "band", style: `left:${from}%;width:${to - from}%` }),
+      value != null ? h("span", { className: `dot${inside ? "" : " out"}`, style: `left:${at(value)}%` }) : null),
+    h("span", { className: "bar-detail" }, kept ? detail : `${detail} · not kept, shown for information`));
+}
+
 function renderRation(feeds, { amounts, summary }, hz) {
   const used = feeds.map((f, i) => ({ f, kg: amounts[i] })).filter((u) => u.kg > 0).sort((a, b) => b.kg - a.kg);
-  const max = Math.max(...used.map((u) => u.kg));
   const check = (ok) => (ok ? "✓" : "✗");
   const [dmLo, dmHi] = LIMITS.dmi;
   const eps = 1e-6;
 
-  return [
-    h("ul", { className: "ration" }, used.map((u) =>
-      h("li", {},
-        h("span", {}, u.f.name),
-        h("span", { className: "amount" }, u.kg < 1 ? `${fmt(u.kg * 1000, 0)} g` : `${fmt(u.kg, 2)} kg`),
-        h("span", { className: "bar" }, h("i", { style: `width:${(u.kg / max) * 100}%` }))))),
-    h("p", { className: "totals" },
-      `${fmt(summary.asFed, 2)} kg per day as fed · ${fmt(summary.delivered.starch, 0)} g starch`),
+  const charts = () => [
+    h("h3", {}, "Nutrients against the daily need"),
+    h("p", { className: "hint chart-note" }, "Each bar is what the ration supplies as a share of the need; the line marks 100%."),
+    nutrientBars(summary, hz),
 
+    h("h3", {}, "Ratios and limits"),
+    h("p", { className: "hint chart-note" }, "The shaded band is the allowed range; the dot is where this ration sits."),
+    h("div", { className: "bars" },
+      RATIOS.map((r) => rangeRow({
+        label: ratioName(r), value: summary.ratios[r.id], lo: r.lo, hi: r.hi, axisMax: r.hi * 1.5,
+        text: summary.ratios[r.id] == null ? "–" : `${fmt(summary.ratios[r.id], 2)} : 1`,
+        detail: r.lo != null ? `Between ${r.lo} and ${r.hi} : 1` : `At most ${r.hi} : 1`, kept: !!hz.ratios[r.id],
+      })),
+      MAX_NUTRIENTS.filter((n) => hz.max[n.key] > 0).map((n) => rangeRow({
+        label: `${n.label} upper limit`, value: summary.delivered[n.key], hi: hz.max[n.key], axisMax: hz.max[n.key] * 1.25,
+        text: `${fmt(summary.delivered[n.key], n.digits)} ${n.unit}`,
+        detail: `At most ${fmt(hz.max[n.key], n.digits)} ${n.unit} a day`,
+      })),
+      rangeRow({
+        label: "Forage share", value: summary.forageShare * 100, lo: LIMITS.minForage * 100, axisMax: 100,
+        text: `${fmt(summary.forageShare * 100, 0)}%`, detail: `At least ${LIMITS.minForage * 100}% of the dry matter`,
+      }),
+      rangeRow({
+        label: "Dry matter intake", value: summary.dmShare * 100, lo: dmLo * 100, hi: dmHi * 100, axisMax: dmHi * 140,
+        text: `${fmt(summary.dmShare * 100, 2)}%`,
+        detail: `${dmLo * 100}–${dmHi * 100}% of body weight · ${fmt(summary.dm, 1)} kg dry matter`,
+      })),
+  ];
+
+  const numbers = () => [
     h("h3", {}, "Nutrients per day"),
     h("div", { className: "table-wrap" },
       h("table", {},
@@ -478,6 +606,21 @@ function renderRation(feeds, { amounts, summary }, hz) {
             h("td", {}, `${fmt(summary.dmShare * 100, 2)}%`),
             h("td", { className: "sub" }, `${dmLo * 100}–${dmHi * 100}%`),
             h("td", {}, check(summary.dmShare >= dmLo - eps && summary.dmShare <= dmHi + eps)))))),
+  ];
+
+  const toggle = h("div", { className: "seg view-toggle" },
+    [["charts", "Charts"], ["numbers", "Exact numbers"]].map(([key, text]) =>
+      h("label", {},
+        h("input", { type: "radio", name: "view", value: key, checked: view === key, onchange: () => setView(key) }),
+        h("span", {}, text))));
+
+  return [
+    h("ul", { className: "ration" }, used.map((u) => feedLine(u.f, u.kg, summary))),
+    h("p", { className: "hint ration-hint" }, "Point at or tap a feed to see what it supplies."),
+    h("p", { className: "totals" },
+      `${fmt(summary.asFed, 2)} kg per day as fed · ${fmt(summary.delivered.starch, 0)} g starch`),
+    toggle,
+    ...(view === "numbers" ? numbers() : charts()),
   ];
 }
 
