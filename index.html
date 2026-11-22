@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horse ration planner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Horse ration planner</h1>
+  <p>Pick the feeds you have. The planner finds the daily ration that meets the requirements with as much of the energy from forage as possible, and then the least starch.</p>
+</header>
+
+<main class="layout">
+  <div class="inputs">
+    <section class="card">
+      <h2>Horse</h2>
+      <div id="horses"></div>
+      <div id="profile"></div>
+      <p class="hint">Filled in from weight and workload for an adult horse (NRC 2007, digestible energy). Edit any value to use your own.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Feeds</h2>
+        <button type="button" class="btn" id="add-feed">Add feed</button>
+      </div>
+      <ul class="feeds" id="feeds"></ul>
+      <p class="hint">The feed list is shared by all your horses; the ticks are per horse.</p>
+    </section>
+
+    <section class="card">
+      <h2>Your data</h2>
+      <p class="hint first">Saved automatically in this browser, on this device only. Use these to move it to another device or share it.</p>
+      <div class="data-actions">
+        <button type="button" class="btn" id="share">Share link</button>
+        <button type="button" class="btn ghost" id="import-file">Import file</button>
+        <button type="button" class="btn ghost" id="export-backup">Save backup file</button>
+        <button type="button" class="btn ghost" id="export-feeds">Save feeds as spreadsheet</button>
+      </div>
+      <input type="file" id="file-input" accept=".json,.csv,.txt,application/json,text/csv" hidden>
+      <p class="hint" id="data-status" role="status"></p>
+      <div id="reset-slot"></div>
+    </section>
+  </div>
+
+  <section class="card result" aria-live="polite">
+    <h2 id="result-title">Daily ration</h2>
+    <div id="result"><p class="hint">Loading solver…</p></div>
+  </section>
+</main>
+
+<footer class="foot">
+  Runs entirely in your browser; your data stays on this device. Not a substitute for advice from a vet or equine nutritionist.
+</footer>
+
+<dialog id="feed-dialog">
+  <form method="dialog" id="feed-form">
+    <h2 id="feed-dialog-title">Feed</h2>
+    <label class="field wide">Name
+      <input name="name" required autocomplete="off">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="forage">
+      <span>Forage (hay, grass, haylage)</span>
+    </label>
+    <div id="feed-fields"></div>
+    <p class="hint">Values are per kg of dry matter, as on most feed analyses. Leave a trace mineral or vitamin empty if you don't know it; it then counts as zero. The maximum is optional and scales with body weight: 100 g/100 kg means at most 500 g a day for a 500 kg horse.</p>
+    <div class="actions">
+      <button type="button" class="link danger" id="feed-delete">Delete feed</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" id="feed-cancel">Cancel</button>
+      <button type="submit" class="btn">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="import-dialog">
+  <form method="dialog" id="import-form">
+    <h2>Import</h2>
+    <div id="import-body"></div>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" id="import-cancel">Cancel</button>
+      <button type="submit" class="btn" id="import-confirm">Import</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="share-dialog">
+  <form method="dialog" id="share-form">
+    <h2>Share link</h2>
+    <label class="check"><input type="radio" name="scope" value="horse" checked><span id="share-horse-label">This horse and its feeds</span></label>
+    <label class="check"><input type="radio" name="scope" value="feeds"><span>All feeds, no horses</span></label>
+    <label class="check"><input type="radio" name="scope" value="all"><span>Everything: all horses and feeds</span></label>
+    <label class="field wide">Link
+      <input id="share-link" readonly>
+    </label>
+    <p class="hint" id="share-note"></p>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" id="share-close">Close</button>
+      <button type="button" class="btn ghost" id="share-native" hidden>Share…</button>
+      <button type="button" class="btn" id="share-copy">Copy link</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
