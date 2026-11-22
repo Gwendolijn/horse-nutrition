@@ -6,6 +6,7 @@
   --muted: #6b675b;
   --line: #e3dccb;
   --accent: #476a38;
+  --accent-2: #86a96b; /* second step of the same hue: "added by the planner" */
   --accent-ink: #ffffff;
   --soft: #e9efdf;
   --warn: #a4501c;
@@ -19,6 +20,7 @@
     --muted: #a49f90;
     --line: #3b382f;
     --accent: #9fbd80;
+    --accent-2: #55703f;
     --accent-ink: #1b1a17;
     --soft: #2f3727;
     --warn: #e39a62;
@@ -89,7 +91,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); f
 .link.danger { color: var(--warn); }
 
 .feeds { list-style: none; margin: 0; padding: 0; }
-.feeds li { display: flex; align-items: center; border-top: 1px solid var(--line); }
+.feeds li { display: flex; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--line); }
 .feeds li:first-child { border-top: 0; }
 .feeds label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 0; cursor: pointer; }
 .feed-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
@@ -178,3 +180,19 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .range .dot.out { background: var(--card); border: 2px solid var(--warn); }
 
 .view-toggle { margin-top: 16px; }
+
+/* "Already feeding" line under a ticked feed */
+.feed-fixed { flex-basis: 100%; display: flex; align-items: center; gap: 8px; padding: 0 0 10px 34px; font-size: .85rem; color: var(--muted); }
+.feed-fixed input:not([type=checkbox]) { flex: 1 1 4em; min-width: 4em; max-width: 9em; min-height: 40px; }
+.feed-fixed span { white-space: nowrap; }
+.feed-fixed select { min-height: 40px; padding: 0 6px; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; }
+
+/* The now / added split in the bars */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 10px; font-size: .8rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; background: var(--accent); }
+.legend i.added, .meter i.added { background: var(--accent-2); }
+.meter { display: flex; gap: 2px; }
+.meter i { flex: none; }
+.meter i:not(:last-child) { border-radius: 0; }
+.ration .tag { margin-left: 8px; }

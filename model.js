@@ -101,6 +101,13 @@ export function buildRows(feeds, profile) {
     const max = feedMaxKg(feed, profile.weight);
     if (max != null) rows.push(row(`feedmax_${i}`, `Maximum amount of ${feed.name}`, (f) => (f === feed ? 1 : 0), null, max));
   });
+  // Amounts the user already feeds are a minimum: the solver keeps at least
+  // that much and adds to it, of the same feed or others. (Keeping them exactly
+  // would make "feed more hay" impossible to suggest.)
+  feeds.forEach((feed, i) => {
+    const kg = profile.fixedKg?.[feed.id];
+    if (kg > 0) rows.push(row(`fixed_${i}`, `Keeping the amount of ${feed.name} you already feed`, (f) => (f === feed ? 1 : 0), kg, null));
+  });
   for (const r of RATIOS) {
     if (!profile.ratios?.[r.id]) continue;
     const name = `${r.num} to ${r.den} ratio`;

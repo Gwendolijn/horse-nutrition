@@ -9,7 +9,7 @@ export const APP_ID = "horse-ration-planner";
 
 // Bump when the default feeds or the tracked nutrients change, so that data
 // saved by an older version gets upgraded on load.
-export const DATA_VERSION = 8;
+export const DATA_VERSION = 9;
 
 // Feed values are per kg dry matter; dm is the dry matter fraction as fed.
 const perKg = (n) => ({ key: n.key, label: n.label, unit: `${n.unit}/kg` });
@@ -90,10 +90,16 @@ export function cleanHorse(raw, validFeedIds) {
   for (const r of RATIOS) ratios[r.id] = !!(raw.ratios?.[r.id] ?? r.on);
   const feedIds = [...new Set(Array.isArray(raw.feedIds) ? raw.feedIds : [])]
     .filter((id) => validFeedIds.has(id));
+  // Amounts already being fed, per feed id, in the unit the user typed them in.
+  const fixed = {};
+  for (const [id, fx] of Object.entries(raw.fixed && typeof raw.fixed === "object" ? raw.fixed : {})) {
+    const amount = numOr(fx?.amount);
+    if (validFeedIds.has(id) && amount > 0) fixed[id] = { amount, unit: fx.unit === "g" ? "g" : "kg" };
+  }
   return {
     id: typeof raw.id === "string" && raw.id ? raw.id.slice(0, 60) : newId("horse"),
     name: String(raw.name ?? "").trim().slice(0, 60) || "Horse",
-    weight, workload, req, max, ratios, feedIds,
+    weight, workload, req, max, ratios, feedIds, fixed,
   };
 }
 
@@ -196,6 +202,7 @@ export function toPayload(state, scope, horseId, { compact = false } = {}) {
       if (h.workload === "custom") Object.assign(out, { req: h.req, max: h.max });
       const ratios = Object.fromEntries(RATIOS.filter((r) => h.ratios[r.id] !== r.on).map((r) => [r.id, h.ratios[r.id]]));
       if (Object.keys(ratios).length) out.ratios = ratios;
+      if (Object.keys(h.fixed).length) out.fixed = h.fixed;
       return out;
     });
   }
@@ -214,7 +221,8 @@ export function parsePayload(obj) {
 const nameKey = (s) => String(s).trim().toLowerCase();
 const sameFeed = (a, b) => a.name === b.name && a.forage === b.forage
   && ALL_FEED_FIELDS.every((fld) => Math.abs(a[fld.key] - b[fld.key]) < 1e-9);
-const horseKey = (h) => JSON.stringify([h.name, h.weight, h.workload, h.req, h.max, h.ratios, [...h.feedIds].sort()]);
+const horseKey = (h) => JSON.stringify([h.name, h.weight, h.workload, h.req, h.max, h.ratios, [...h.feedIds].sort(),
+  Object.entries(h.fixed).sort(([a], [b]) => (a < b ? -1 : 1))]);
 
 // Works out what an import would do, without doing it. Feeds and horses are
 // matched by name: a match is updated (the incoming values win), anything else
@@ -253,7 +261,9 @@ export function planImport(state, payload) {
   for (const raw of payload.horses) {
     const feedIds = (Array.isArray(raw.feedIds) ? raw.feedIds : []).map((id) => idMap.get(id)).filter(Boolean);
     const at = next.horses.findIndex((h) => nameKey(h.name) === nameKey(raw.name ?? ""));
-    const h = cleanHorse({ ...raw, id: at >= 0 ? next.horses[at].id : undefined, feedIds }, ids);
+    const fixed = Object.fromEntries(Object.entries(raw.fixed && typeof raw.fixed === "object" ? raw.fixed : {})
+      .map(([id, fx]) => [idMap.get(id), fx]).filter(([id]) => id));
+    const h = cleanHorse({ ...raw, id: at >= 0 ? next.horses[at].id : undefined, feedIds, fixed }, ids);
     if (at >= 0 && horseKey(next.horses[at]) === horseKey(h)) report.horses.same++;
     else if (at >= 0) {
       next.horses[at] = h;

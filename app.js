@@ -1,7 +1,7 @@
 // app.js — UI for the ration planner. The model lives in model.js.
 
 import GLPK from "./vendor/glpk.js";
-import { NUTRIENTS, LIMITS, RATIOS, WORKLOADS, requirementsFor, maximumsFor, feedMaxKg, solve } from "./model.js";
+import { NUTRIENTS, LIMITS, RATIOS, WORKLOADS, requirementsFor, maximumsFor, feedMaxKg, solve, summarize } from "./model.js";
 
 import {
   FEED_FIELDS, FEED_TRACE_FIELDS, FEED_LIMIT_FIELD, ALL_FEED_FIELDS, MAX_NUTRIENTS,
@@ -185,18 +185,44 @@ function renderFeeds() {
   const tick = (f, on) => {
     hz.feedIds = hz.feedIds.filter((id) => id !== f.id);
     if (on) hz.feedIds.push(f.id);
+    renderFeeds(); // the "already feeding" line only shows for ticked feeds
     changed();
   };
-  $("feeds").replaceChildren(...state.feeds.map((f) =>
-    h("li", {},
+
+  // Optional: what the horse already gets of this feed. Left empty, the
+  // planner decides the amount; filled in, the planner feeds at least that.
+  const fixedLine = (f) => {
+    const fx = hz.fixed[f.id];
+    const amount = h("input", {
+      type: "number", inputMode: "decimal", min: "0", step: "any", placeholder: "optional",
+      value: fx ? String(fx.amount) : "", "aria-label": `Amount of ${f.name} already fed per day`,
+    });
+    const unit = h("select", { "aria-label": "Unit" }, h("option", { value: "kg" }, "kg a day"), h("option", { value: "g" }, "g a day"));
+    unit.value = fx ? fx.unit : f.energy > 0 ? "kg" : "g"; // supplements are usually measured in grams
+    const store = () => {
+      const v = num(amount.value);
+      if (v > 0) hz.fixed[f.id] = { amount: v, unit: unit.value };
+      else delete hz.fixed[f.id];
+      changed();
+    };
+    amount.addEventListener("input", store);
+    unit.addEventListener("change", store);
+    return h("div", { className: "feed-fixed" }, h("span", {}, "Feeding now"), amount, unit);
+  };
+
+  $("feeds").replaceChildren(...state.feeds.map((f) => {
+    const on = hz.feedIds.includes(f.id);
+    return h("li", {},
       h("label", {},
-        h("input", { type: "checkbox", checked: hz.feedIds.includes(f.id), onchange: (e) => tick(f, e.target.checked) }),
+        h("input", { type: "checkbox", checked: on, onchange: (e) => tick(f, e.target.checked) }),
         h("span", {},
           h("span", { className: "feed-name" }, f.name),
           h("span", { className: "feed-meta" },
             `${f.forage ? "Forage" : "Concentrate"} · ${fmt(f.energy)} MJ · ${fmt(f.starch, 0)} g starch per kg`
               + (feedMaxKg(f, hz.weight) != null ? ` · max ${fmt(feedMaxKg(f, hz.weight) * 1000, 0)} g a day` : "")))),
-      h("button", { type: "button", className: "link", onclick: () => openFeedDialog(f), "aria-label": `Edit ${f.name}` }, "Edit"))));
+      h("button", { type: "button", className: "link", onclick: () => openFeedDialog(f), "aria-label": `Edit ${f.name}` }, "Edit"),
+      on ? fixedLine(f) : "");
+  }));
 }
 
 let editing = null;
@@ -245,7 +271,10 @@ $("feed-form").addEventListener("submit", (e) => {
 $("feed-cancel").addEventListener("click", () => $("feed-dialog").close());
 $("feed-delete").addEventListener("click", () => {
   state.feeds = state.feeds.filter((f) => f !== editing);
-  for (const o of state.horses) o.feedIds = o.feedIds.filter((id) => id !== editing.id);
+  for (const o of state.horses) {
+    o.feedIds = o.feedIds.filter((id) => id !== editing.id);
+    delete o.fixed[editing.id];
+  }
   $("feed-dialog").close();
   renderFeeds();
   changed();
@@ -400,23 +429,35 @@ async function update() {
   $("result-title").textContent = state.horses.length > 1 ? `Daily ration for ${hz.name}` : "Daily ration";
   if (!(hz.weight > 0)) return out.replaceChildren(notice("Enter a body weight", "The intake limits depend on it."));
   if (feeds.length === 0) return out.replaceChildren(notice("No feeds selected", "Tick at least one feed to get a ration."));
+  // Amounts the horse already gets: evaluated on their own first, then kept as a minimum by the solver.
+  const fixedKg = {};
+  for (const f of feeds) {
+    const fx = hz.fixed[f.id];
+    if (fx) fixedKg[f.id] = fx.unit === "g" ? fx.amount / 1000 : fx.amount;
+  }
+  const now = Object.keys(fixedKg).length ? summarize(feeds, feeds.map((f) => fixedKg[f.id] ?? 0), hz) : null;
+  // When no ration can be found, the amounts fed now are still worth showing on their own.
+  const nowOnly = () => (now ? [
+    h("h3", {}, "What you feed now, against the daily need"),
+    nutrientBars(now, hz, null),
+  ] : []);
   // A required nutrient that no selected feed contains: say so directly.
   const missing = NUTRIENTS.filter((n) => hz.req[n.key] > 0 && !feeds.some((f) => f[n.key] > 0));
   if (missing.length) {
     return out.replaceChildren(notice("No ration fits these feeds",
       "None of the selected feeds contain the following. Add a feed that does (a mineral balancer, for example), or enter the values on your feeds:",
-      missing.map((n) => n.label)));
+      missing.map((n) => n.label)), ...nowOnly());
   }
   let res;
   try {
-    res = await solve(glpk, feeds, hz);
+    res = await solve(glpk, feeds, { ...hz, fixedKg });
   } catch (err) {
     console.error(err);
     if (seq === solveSeq) out.replaceChildren(notice("Something went wrong", "The solver failed on this input."));
     return;
   }
   if (seq !== solveSeq) return; // a newer change is already being solved
-  out.replaceChildren(...(res.ok ? renderRation(feeds, res, hz) : [renderInfeasible(res)]));
+  out.replaceChildren(...(res.ok ? renderRation(feeds, res, hz, now, fixedKg) : [renderInfeasible(res), ...nowOnly()]));
 }
 
 function notice(title, text, items = []) {
@@ -439,7 +480,7 @@ const STARCH = { key: "starch", label: "Starch", unit: "g", digits: 0 };
 // One line of the ration: feed and amount. Pointing at it (mouse) or tapping
 // it (touch, keyboard) shows what that amount supplies, and how much of the
 // ration's total of each nutrient that is.
-function feedLine(f, kg, summary) {
+function feedLine(f, kg, summary, tag) {
   const rows = [...NUTRIENTS, STARCH]
     .map((n) => {
       const amount = f[n.key] * f.dm * kg;
@@ -462,7 +503,9 @@ function feedLine(f, kg, summary) {
       : h("p", { className: "hint" }, "Nothing that the planner tracks."));
 
   const button = h("button", { type: "button", className: "feed-toggle", "aria-expanded": "false" }, f.name);
-  const li = h("li", {}, button, h("span", { className: "amount" }, amountText(kg)), pop);
+  const li = h("li", {},
+    h("span", {}, button, tag ? h("span", { className: "tag" }, tag) : null),
+    h("span", { className: "amount" }, amountText(kg)), pop);
   button.addEventListener("click", (e) => {
     e.stopPropagation();
     const open = !li.classList.contains("open");
@@ -489,7 +532,8 @@ const TIGHT = 1e-4; // how close counts as "exactly at" a requirement or limit
 // One bar per nutrient: supply as a share of the need. A solved ration never
 // falls short, so the useful signal is which nutrients sit exactly at the
 // minimum (they are what shapes the ration) and which are far above it.
-function nutrientBars(summary, hz) {
+function nutrientBars(summary, hz, now) {
+  const width = (share) => `width:${(Math.min(Math.max(share, 0), BAR_CAP) / BAR_CAP) * 100}%`;
   return h("div", { className: "bars" }, NUTRIENTS.map((n) => {
     const need = hz.req[n.key];
     const got = summary.delivered[n.key];
@@ -501,13 +545,21 @@ function nutrientBars(summary, hz) {
         h("span", { className: "bar-detail" }, "No requirement set"));
     }
     const share = got / need;
+    // With a current ration, the bar splits into what is fed now and what the planner adds.
+    const nowShare = now ? Math.min(now.delivered[n.key] / need, share) : null;
+    const capped = (v) => Math.min(v, BAR_CAP);
     return h("div", { className: "bar-row" },
       h("span", { className: "bar-label" }, n.label,
-        share < 1 + TIGHT ? h("span", { className: "tag" }, "at minimum") : null),
+        share < 1 - TIGHT ? h("span", { className: "tag warn" }, "short")
+          : share < 1 + TIGHT ? h("span", { className: "tag" }, "at minimum") : null),
       h("span", { className: "bar-value" }, `${fmt(share * 100, 0)}%`),
       h("span", { className: `meter${share > BAR_CAP ? " over" : ""}` },
-        h("i", { style: `width:${(Math.min(share, BAR_CAP) / BAR_CAP) * 100}%` })),
-      h("span", { className: "bar-detail" }, `${amount} of ${fmt(need, n.digits)} ${n.unit} needed`));
+        now
+          ? [h("i", { style: width(nowShare) }), h("i", { className: "added", style: width(capped(share) - capped(nowShare)) })]
+          : h("i", { style: width(share) })),
+      h("span", { className: "bar-detail" }, now
+        ? `Now ${fmt(now.delivered[n.key], n.digits)} ${n.unit} (${fmt((now.delivered[n.key] / need) * 100, 0)}%) · with the planner's ration ${amount} of ${fmt(need, n.digits)} ${n.unit} needed`
+        : `${amount} of ${fmt(need, n.digits)} ${n.unit} needed`));
   }));
 }
 
@@ -530,7 +582,7 @@ function rangeRow({ label, value, text, detail, lo = null, hi = null, axisMax, k
     h("span", { className: "bar-detail" }, kept ? detail : `${detail} · not kept, shown for information`));
 }
 
-function renderRation(feeds, { amounts, summary }, hz) {
+function renderRation(feeds, { amounts, summary }, hz, now, fixedKg) {
   const used = feeds.map((f, i) => ({ f, kg: amounts[i] })).filter((u) => u.kg > 0).sort((a, b) => b.kg - a.kg);
   const check = (ok) => (ok ? "✓" : "✗");
   const [dmLo, dmHi] = LIMITS.dmi;
@@ -539,7 +591,10 @@ function renderRation(feeds, { amounts, summary }, hz) {
   const charts = () => [
     h("h3", {}, "Nutrients against the daily need"),
     h("p", { className: "hint chart-note" }, "Each bar is what the ration supplies as a share of the need; the line marks 100%."),
-    nutrientBars(summary, hz),
+    now ? h("div", { className: "legend" },
+      h("span", {}, h("i", {}), "You feed now"),
+      h("span", {}, h("i", { className: "added" }), "Added by the planner")) : null,
+    nutrientBars(summary, hz, now),
 
     h("h3", {}, "Ratios and limits"),
     h("p", { className: "hint chart-note" }, "The shaded band is the allowed range; the dot is where this ration sits."),
@@ -615,7 +670,10 @@ function renderRation(feeds, { amounts, summary }, hz) {
         h("span", {}, text))));
 
   return [
-    h("ul", { className: "ration" }, used.map((u) => feedLine(u.f, u.kg, summary))),
+    h("ul", { className: "ration" }, used.map((u) =>
+      feedLine(u.f, u.kg, summary, !now ? null
+        : !fixedKg[u.f.id] ? "added"
+        : u.kg > fixedKg[u.f.id] * (1 + TIGHT) ? `up from ${amountText(fixedKg[u.f.id])}` : "as now"))),
     h("p", { className: "hint ration-hint" }, "Point at or tap a feed to see what it supplies."),
     h("p", { className: "totals" },
       `${fmt(summary.asFed, 2)} kg per day as fed · ${fmt(summary.delivered.starch, 0)} g starch`),
